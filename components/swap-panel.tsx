@@ -1,10 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { usePrivy } from "@privy-io/react-auth";
-import { formatUnits } from "viem";
+import { useWallets } from "@privy-io/react-auth";
+import { erc20Abi, formatUnits, maxUint256 } from "viem";
+import { MONEY_CHAIN } from "@/lib/chain/config";
+import { privyChainClients } from "@/lib/chain/wallet";
 import { formatTokenAmount } from "@/lib/tokens";
-import type { SwapSide } from "@/lib/privy/swap";
+import type { SwapQuote, SwapSide } from "@/lib/swap";
 
 type SwapPanelProps = {
   address: string;
@@ -21,36 +23,41 @@ function formatRaw(raw: string, decimals: number) {
   }
 }
 
+function hexToBigInt(value: string) {
+  if (!value) return 0n;
+  return BigInt(value);
+}
+
 export default function SwapPanel({
   address,
   ethRaw,
   usdcRaw,
   onSwapped,
 }: SwapPanelProps) {
-  const { getAccessToken } = usePrivy();
+  const { wallets } = useWallets();
   const [from, setFrom] = useState<SwapSide>("USDC");
   const [amount, setAmount] = useState("");
-  const [quoteOut, setQuoteOut] = useState<string | null>(null);
+  const [quote, setQuote] = useState<SwapQuote | null>(null);
   const [busy, setBusy] = useState<"quote" | "swap" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const to: SwapSide = from === "ETH" ? "USDC" : "ETH";
 
-  async function authedPost(path: string) {
-    const token = await getAccessToken();
-    if (!token) throw new Error("Sign in again to swap.");
-    const res = await fetch(path, {
+  function wallet() {
+    const match = wallets.find(
+      (item) => item.address.toLowerCase() === address.toLowerCase(),
+    );
+    if (!match) throw new Error("Connect the wallet first.");
+    return match;
+  }
+
+  async function fetchQuote() {
+    const res = await fetch("/api/swap/quote", {
       method: "POST",
-      headers: {
-        authorization: `Bearer ${token}`,
-        "content-type": "application/json",
-      },
+      headers: { "content-type": "application/json" },
       body: JSON.stringify({ from, amount, address }),
     });
-    const json = (await res.json()) as {
-      error?: string;
-      outputAmount?: string;
-    };
-    if (!res.ok) throw new Error(json.error ?? "Swap request failed.");
+    const json = (await res.json()) as SwapQuote & { error?: string };
+    if (!res.ok) throw new Error(json.error ?? "Could not quote.");
     return json;
   }
 
@@ -58,10 +65,9 @@ export default function SwapPanel({
     setBusy("quote");
     setError(null);
     try {
-      const json = await authedPost("/api/swap/quote");
-      setQuoteOut(json.outputAmount ?? null);
+      setQuote(await fetchQuote());
     } catch (caught) {
-      setQuoteOut(null);
+      setQuote(null);
       setError(caught instanceof Error ? caught.message : "Could not quote.");
     } finally {
       setBusy(null);
@@ -72,8 +78,37 @@ export default function SwapPanel({
     setBusy("swap");
     setError(null);
     try {
-      await authedPost("/api/swap/execute");
-      setQuoteOut(null);
+      const next = quote ?? (await fetchQuote());
+      const { walletClient, publicClient } = await privyChainClients(
+        wallet(),
+        MONEY_CHAIN,
+      );
+
+      if (next.approvalAddress) {
+        const allowance = await publicClient.readContract({
+          address: next.sellToken,
+          abi: erc20Abi,
+          functionName: "allowance",
+          args: [address as `0x${string}`, next.approvalAddress as `0x${string}`],
+        });
+        if (allowance < BigInt(next.sellAmount)) {
+          const approveHash = await walletClient.writeContract({
+            address: next.sellToken,
+            abi: erc20Abi,
+            functionName: "approve",
+            args: [next.approvalAddress as `0x${string}`, maxUint256],
+          });
+          await publicClient.waitForTransactionReceipt({ hash: approveHash });
+        }
+      }
+
+      const hash = await walletClient.sendTransaction({
+        to: next.tx.to,
+        data: next.tx.data,
+        value: hexToBigInt(next.tx.value),
+      });
+      await publicClient.waitForTransactionReceipt({ hash });
+      setQuote(null);
       setAmount("");
       onSwapped();
     } catch (caught) {
@@ -84,10 +119,10 @@ export default function SwapPanel({
   }
 
   const quoted =
-    quoteOut == null
+    quote == null
       ? null
       : formatTokenAmount(
-          Number(formatUnits(BigInt(quoteOut), to === "ETH" ? 18 : 6)),
+          Number(formatUnits(BigInt(quote.outputAmount), to === "ETH" ? 18 : 6)),
         );
 
   return (
@@ -96,7 +131,7 @@ export default function SwapPanel({
         Swap
       </h2>
       <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-        Trade ETH and USDC in this wallet on Base.
+        Trade ETH and USDC in this wallet on Base. Confirm in the Privy popup.
       </p>
       <div className="mt-4 grid grid-cols-2 rounded-xl bg-zinc-100 p-1 dark:bg-zinc-900">
         {(["USDC", "ETH"] as const).map((side) => (
@@ -105,7 +140,7 @@ export default function SwapPanel({
             type="button"
             onClick={() => {
               setFrom(side);
-              setQuoteOut(null);
+              setQuote(null);
             }}
             className={`min-h-10 rounded-lg px-3 text-sm font-medium transition-colors ${
               from === side
@@ -127,7 +162,7 @@ export default function SwapPanel({
         value={amount}
         onChange={(event) => {
           setAmount(event.target.value);
-          setQuoteOut(null);
+          setQuote(null);
         }}
         placeholder={`Amount of ${from}`}
         className="mt-2 min-h-12 w-full rounded-xl border border-zinc-200 bg-white px-4 text-base text-zinc-900 outline-none ring-teal-500/40 placeholder:text-zinc-400 focus:ring-2 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-50 dark:placeholder:text-zinc-500"
@@ -155,7 +190,7 @@ export default function SwapPanel({
           disabled={busy !== null}
           className="min-h-12 rounded-xl bg-teal-800 px-3 text-sm font-medium text-white transition-colors hover:bg-teal-700 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-teal-500 dark:text-zinc-950 dark:hover:bg-teal-400"
         >
-          {busy === "swap" ? "Swapping…" : `Swap to ${to}`}
+          {busy === "swap" ? "Confirm in Privy…" : `Swap to ${to}`}
         </button>
       </div>
     </section>

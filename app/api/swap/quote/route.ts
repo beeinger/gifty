@@ -1,13 +1,22 @@
 import { NextResponse } from "next/server";
-import {
-  accessTokenFromRequest,
-  embeddedWalletId,
-  httpError,
-  privyServer,
-} from "@/lib/privy/server";
-import { parseSwapBody } from "@/lib/privy/swap";
+import { isAddress } from "viem";
+import { MONEY_CHAIN } from "@/lib/chain/config";
+import { parseSwapBody, userSwapError, type SwapQuote } from "@/lib/swap";
 
 export const dynamic = "force-dynamic";
+
+type LiFiQuote = {
+  message?: string;
+  estimate?: {
+    toAmount?: string;
+    approvalAddress?: string;
+  };
+  transactionRequest?: {
+    to?: string;
+    data?: string;
+    value?: string;
+  };
+};
 
 export async function POST(request: Request) {
   let body: unknown;
@@ -18,37 +27,55 @@ export async function POST(request: Request) {
   }
 
   try {
-    const token = accessTokenFromRequest(request);
-    if (!token) {
-      return NextResponse.json({ error: "Missing access token" }, { status: 401 });
+    const swap = parseSwapBody(body);
+    const params = new URLSearchParams({
+      fromChain: String(MONEY_CHAIN.id),
+      toChain: String(MONEY_CHAIN.id),
+      fromToken: swap.fromToken,
+      toToken: swap.toToken,
+      fromAmount: swap.baseAmount,
+      fromAddress: swap.address,
+      slippage: "0.005",
+      integrator: "gifty",
+    });
+
+    const res = await fetch(`https://li.quest/v1/quote?${params}`, {
+      headers: { accept: "application/json" },
+      cache: "no-store",
+    });
+    const quote = (await res.json()) as LiFiQuote;
+    if (!res.ok) {
+      throw new Error(quote.message ?? "Could not quote this swap.");
     }
 
-    const swap = parseSwapBody(body);
-    const privy = privyServer();
-    const claims = await privy.utils().auth().verifyAccessToken(token);
-    const walletId = await embeddedWalletId(privy, claims.user_id, swap.address);
-    const quote = await privy.wallets().swaps().quote(walletId, {
-      source: swap.source,
-      destination: swap.destination,
-      base_amount: swap.baseAmount,
-      amount_type: "exact_input",
-    });
+    const to = quote.transactionRequest?.to;
+    const data = quote.transactionRequest?.data;
+    const outputAmount = quote.estimate?.toAmount;
+    if (!to || !isAddress(to) || !data || !outputAmount) {
+      throw new Error("Quote missing swap transaction.");
+    }
 
-    return NextResponse.json({
+    const approval = quote.estimate?.approvalAddress;
+    const payload: SwapQuote = {
       from: swap.from,
       to: swap.to,
-      inputAmount: quote.input_amount,
-      outputAmount: quote.est_output_amount,
-      minimumOutputAmount: quote.minimum_output_amount,
-    });
+      outputAmount,
+      sellAmount: swap.baseAmount,
+      approvalAddress:
+        swap.from === "USDC" && approval && isAddress(approval)
+          ? approval
+          : null,
+      sellToken: swap.fromToken,
+      tx: {
+        to,
+        data: data as `0x${string}`,
+        value: quote.transactionRequest?.value ?? "0x0",
+      },
+    };
+
+    return NextResponse.json(payload);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "";
-    const parsed =
-      message.startsWith("Choose") ||
-      message.startsWith("Enter") ||
-      message.startsWith("Invalid")
-        ? { message, status: 400 }
-        : httpError(error, "Could not quote this swap");
+    const parsed = userSwapError(error, "Could not quote this swap.");
     return NextResponse.json({ error: parsed.message }, { status: parsed.status });
   }
 }
