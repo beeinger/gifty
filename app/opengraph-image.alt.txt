@@ -1,0 +1,1 @@
+Gifty: login, a real ENS name, money in, money out, and a way to pull the next person in.

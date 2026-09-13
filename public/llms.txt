@@ -1,0 +1,38 @@
+# Gifty
+
+> Social gift wallet. Send ETH by gift link or username. Recipients sign in with Privy, get a free ENSv2 name on gifty.eth, and claim on Base.
+
+- Site: https://gifty.energia.dev
+- Source: https://github.com/beeinger/gifty
+- Spec: https://github.com/beeinger/gifty/blob/main/mission.md
+
+## Product
+
+Gifty is for sending ETH to people who do not have a wallet yet. A sender locks ETH into a gift and shares a link. The recipient signs in with Privy (email or Google), picks a free username, and claims the ETH.
+
+The gift is ETH behind a secret. The ENS name is created at signup, not attached to the link. Bare names such as `vitalik` resolve to `vitalik.gifty.eth`. Full ENS names and `0x` addresses still work.
+
+Money lives on Base. Usernames live on Sepolia because ENS v2 beta is Sepolia-only. The app does not ask the user to switch networks. Username registration gas is operator-sponsored.
+
+## What is live
+
+- Privy production login and embedded self-custodial wallets on Base
+- Free ENSv2 subnames under gifty.eth
+- Gift create and ZK claim on Base (Circom Poseidon circuit, snarkjs PLONK, on-chain verifier)
+- Privy fiat onramp to Base USDC
+- Privy crypto deposit into Base ETH
+- Privy wallet swaps between ETH and USDC on Base
+- Operator-sponsored claim when the recipient has no Base ETH (small fee from the gift); self-paid claim is free of that fee
+
+## What is not live
+
+- Spend card issuing (UI is a demo; KYB / Bridge is not set up)
+- Pay by phone number
+
+## Stack
+
+- Next.js app (Bun)
+- Privy for auth, wallets, onramp, swaps
+- Solidity contracts: GiftyClaimer, GiftyVerifier, GiftyRegistrar (Foundry)
+- ENSv2 on Sepolia: parent gifty.eth, UserRegistry, Permissioned Resolver
+- Circom `gifty_claim` + snarkjs PLONK
