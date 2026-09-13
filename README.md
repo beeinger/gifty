@@ -16,7 +16,7 @@ Env: see `.env.example`. `NEXT_PUBLIC_APP_URL` is the public origin (`https://gi
 
 Needs Foundry (`forge`). `bun run zk:setup` installs `circom` into `.bin/` if it is not already on PATH.
 
-Needs `NEXT_PUBLIC_PRIVY_APP_ID` (optional `NEXT_PUBLIC_PRIVY_CLIENT_ID`). Server swaps need `PRIVY_APP_SECRET` on the host (Vercel too) and Privy gas sponsorship. Privy wallets stay on Base. Sepolia ENS is operator-only.
+Needs `NEXT_PUBLIC_PRIVY_APP_ID` (optional `NEXT_PUBLIC_PRIVY_CLIENT_ID`). Privy wallets stay on Base. Sepolia ENS is operator-only. ETH↔USDC swap quotes via LI.FI; user confirms in the same Privy tx popup as gifts.
 
 ## Layout
 
@@ -34,7 +34,7 @@ Needs `NEXT_PUBLIC_PRIVY_APP_ID` (optional `NEXT_PUBLIC_PRIVY_CLIENT_ID`). Serve
 ## Chain split
 
 - **Sepolia:** ENSv2 parent `gifty.eth`, `GiftyRegistrar`, username mint. Operator always sponsors register. User wallet never switches to Sepolia.
-- **Base:** `GiftyClaimer` + `GiftyVerifier`, transfers, balances, Privy fiat onramp to Base USDC, crypto deposit into Base ETH, Privy wallet swap ETH↔USDC. Operator sponsors claims if the user has no Base ETH.
+- **Base:** `GiftyClaimer` + `GiftyVerifier`, transfers, balances, Privy fiat onramp to Base USDC, crypto deposit into Base ETH, ETH↔USDC swap (LI.FI quote + Privy confirm). Operator sponsors claims if the user has no Base ETH.
 
 ## Progress
 
@@ -45,5 +45,5 @@ Needs `NEXT_PUBLIC_PRIVY_APP_ID` (optional `NEXT_PUBLIC_PRIVY_CLIENT_ID`). Serve
 | Gift lock / ZK claim on Base | done |
 | Privy onramp on Base | done (USDC card only) |
 | Privy crypto deposit into Base ETH | done |
-| Privy wallet swap ETH↔USDC on Base | done |
+| ETH↔USDC swap on Base (LI.FI + Privy popup) | done |
 | Demo spend card | done (live issuing mocked) |
